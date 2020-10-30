@@ -1,0 +1,7 @@
+figure.figsize : 10, 10
+figure.autolayout : True
+font.size : 14
+font.weight : bold
+axes.labelweight : bold
+axes.spines.top : False
+axes.spines.right : False
