@@ -2,6 +2,7 @@
 # -*- coding: utf-8 -*-
 """
 Created on Sun Jul 26 21:56:43 2020
+Modified: 14/12/2020 - Dataset wrapped as a class
 
 @author: bryzgalovdm
 """
@@ -9,23 +10,79 @@ Created on Sun Jul 26 21:56:43 2020
 import numpy as np
 import csv
 import glob, os, sys
-import matplotlib.pyplot as plt
-import pandas as pd
-from scipy.stats import zscore, spearmanr, mannwhitneyu, pearsonr
-import time
-import imp
-from scipy.sparse import csr_matrix
 
 # %% Import Steinmetz dependency
 os.chdir('/Users/bryzgalovdm/Documents/Steinmetz_dataset/')
 import SteinmetzHelpers
 
+# %% Dataset class
+class SteinmetzDataset:
+    def __init__(self, path, eventtype, dt=0.05, dT=3.5, T0=1.5, brain='whole'):
+        self.path = path
+        self.eventtype = eventtype
+        self.dt = dt # binsize
+        self.dT = dT # overall length of epoch
+        self.T0 = T0 # time before locking event
+        self.brain = brain
+        # Attributes to be loaded
+        self.response = []
+        self.brain_area = []
+        self.spikes = []
+        self.response_time = []
+        self.feedback_time = []
+        self.feedback_type = []
+        self.contrast_right = []
+        self.contrast_left = []
+        self.onset = []
+
+    def load(self):
+        # good cells and brain regions
+        good_cells, brain_region = SteinmetzHelpers.get_good_cells(self.path)
+        # event timing
+        response_times, visual_times, rsp, _, feedback_time = SteinmetzHelpers.get_event_times(self.path)
+        # event types
+        stimes, sclust = SteinmetzHelpers.get_spikes(self.path)
+        response, vis_right, vis_left, feedback_type = SteinmetzHelpers.get_event_types(self.path)
+        # trials loader
+        if self.eventtype == 'stim':
+            S = SteinmetzHelpers.psth(stimes, sclust, visual_times-self.T0, self.dT, self.dt)
+        elif self.eventtype == 'resp':
+            S = SteinmetzHelpers.psth(stimes, sclust, response_times-self.T0, self.dT, self.dt)
+        elif self.eventtype == 'react':
+            reaction_time = np.load(self.path + 'trials.reaction_times.npy')
+            real_react_time = reaction_time[:,0].reshape(len(reaction_time),1)/1000
+            tolocktimes_react = visual_times+real_react_time-self.T0
+            tolocktimes_react[tolocktimes_react==np.inf] = response_times[tolocktimes_react==np.inf]
+            S = SteinmetzHelpers.psth(stimes, sclust, tolocktimes_react, self.dT, self.dt)
+
+        # % Do the data
+        good_cells = good_cells * (np.mean(S, axis=(1,2))>0)
+        S = S[good_cells].astype('int8')
+
+        self.response = response
+        self.brain_area = brain_region[good_cells]
+        self.spikes = S
+        self.response_time = rsp
+        self.feedback_time = feedback_time
+        self.feedback_type = feedback_type
+        self.contrast_right = vis_right[:len(response)]
+        self.contrast_left = vis_left[:len(response)]
+        if self.eventtype == 'stim':
+            self.onset = visual_times
+        elif self.eventtype == 'resp':
+            self.onset = response_times
+        elif self.eventtype == 'react':
+            self.onset = tolocktimes_react
+
+        print(self.path + ' loaded successfully')
+
+
 # %% Load data
-def LoadSteinmetzData(datadir, tlockevent='stim',
+def LoadSteinmetzData(datadir, eventtype='stim',
                       binsize=1/100, dT=3.5, T0=1.5,
                       sessionstoload='all'):
     '''
-    LoadSteinmetzData(datadir, tlockevent='stim',
+    LoadSteinmetzData(datadir, eventtype='stim',
                       binsize=1/100, dT=3.5, T0=1.5,
                       sessionstoload='all')
 
@@ -33,7 +90,7 @@ def LoadSteinmetzData(datadir, tlockevent='stim',
 
     Args:
     datadir:        directory with full Steinmetz dataset
-    tlockevent:     event to lock onto ('stim' OR 'react' OR 'resp')
+    eventtype:      event to lock onto ('stim' OR 'react' OR 'resp')
                     'react' works only if you specify RTdir - directory with reaction_times.npy
     binsize:        bin size to bin spiketrains (in s)
     dT:             length of trial to retrieve (in sec)
@@ -44,20 +101,19 @@ def LoadSteinmetzData(datadir, tlockevent='stim',
 
     Returns:
       alldat     : List with dictionaries: each dict is one recording:
-                  alldat[0]['spks']  - binned time-locked spiketrains with binsize
-                  alldat[0]['brainarea'] - location of each cluster in the brain
-                  alldat[0]['response'] - response type on each trial
-                  alldat[0]['response_time'] - response time on each trial
-                  alldat[0]['feedback_type'] - feedback type on each trial
-                  alldat[0]['feedback_time'] - feedback time type on each trial
-                  alldat[0]['contrast_right'] - proportion of contrast on each trial (right screen)
-                  alldat[0]['contrast_left'] - proportion of contrast on each trial (left screen)
-                  alldat[0]['bin_size'] - binsize
-                  alldat[0]['onset'] - times of the event to locked onto
+                  alldat[0].spikes  - binned time-locked spiketrains with binsize
+                  alldat[0].brain_area - location of each cluster in the brain
+                  alldat[0].response - response type on each trial
+                  alldat[0].response_time - response time on each trial
+                  alldat[0].feedback_type - feedback type on each trial
+                  alldat[0].feedback_time - feedback time type on each trial
+                  alldat[0].contrast_right - proportion of contrast on each trial (right screen)
+                  alldat[0].contrast_left - proportion of contrast on each trial (left screen)
+                  alldat[0].onset - times of the event to locked onto
 
 
     Example:
-      alldat = LoadSteinmetzData(datadir, tlockevent='react', sessionstoload=[0,2,3])
+      alldat = LoadSteinmetzData(datadir, eventype='react', sessionstoload=[0,2,3])
 
 '''
 
@@ -81,101 +137,7 @@ def LoadSteinmetzData(datadir, tlockevent='stim',
         raise TypeError("sessionstoload is either 'all' or list or numpy array or int")
 
     for idir in range(len(numsessions)):
-        # good cells and brain regions
-        good_cells, brain_region, br = SteinmetzHelpers.get_good_cells(fdir[idir])
-        # spikes
-        stimes, sclust = SteinmetzHelpers.get_spikes(fdir[idir])
-        # event types
-        response, vis_right, vis_left, feedback_type = SteinmetzHelpers.get_event_types(fdir[idir])
-        # event timing
-        response_times, visual_times, rsp, gocue, feedback_time = SteinmetzHelpers.get_event_times(fdir[idir])
-        # trials loader
-        if tlockevent == 'stim':
-            S = SteinmetzHelpers.psth(stimes, sclust, visual_times-T0, dT, binsize)
-        elif tlockevent == 'resp':
-            S = SteinmetzHelpers.psth(stimes, sclust, response_times-T0, dT, binsize)
-        elif tlockevent == 'react':
-            reaction_time = np.load(fdir[idir] + 'trials.reaction_times.npy')
-            real_react_time = reaction_time[:,0].reshape(len(reaction_time),1)/1000
-            tolocktimes_react = visual_times+real_react_time-T0
-            tolocktimes_react[tolocktimes_react==np.inf] = response_times[tolocktimes_react==np.inf]
-            S = SteinmetzHelpers.psth(stimes, sclust, tolocktimes_react, dT, binsize)
-
-
-        # % Do the data
-        good_cells = good_cells * (np.mean(S, axis=(1,2))>0)
-        S  = S[good_cells].astype('int8')
-
-        alldat.append({})
-        alldat[idir]['response'] = response
-        ntrials = len(alldat[idir]['response'])
-
-        alldat[idir]['brain_area'] = brain_region[good_cells]
-        alldat[idir]['spks'] = S
-        alldat[idir]['response_time'] = rsp
-        alldat[idir]['feedback_time'] = feedback_time
-        alldat[idir]['feedback_type'] = feedback_type
-        alldat[idir]['contrast_right'] = vis_right[:ntrials]
-        alldat[idir]['contrast_left'] = vis_left[:ntrials]
-        alldat[idir]['bin_size'] = binsize
-        alldat[idir]['onset'] = visual_times
-        if tlockevent == 'react':
-            alldat[idir]['reaction_times'] = tolocktimes_react
-
-    print('Loaded successfully')
+        alldat[idir] = SteinmetzDataset(fdir[idir], eventtype)
+        alldat[idir].load()
 
     return alldat
-
-# %% Taken from tutorials
-def plot_weights(models, sharey=True):
-  """Draw a stem plot of weights for each model in models dict."""
-  n = len(models)
-  f = plt.figure(figsize=(10, 2.5 * n))
-  axs = f.subplots(n, sharex=True, sharey=sharey)
-  axs = np.atleast_1d(axs)
-
-  for ax, (title, model) in zip(axs, models.items()):
-
-    ax.margins(x=.02)
-    stem = ax.stem(model.coef_.squeeze(), use_line_collection=True)
-    stem[0].set_marker(".")
-    stem[0].set_color(".2")
-    stem[1].set_linewidths(.5)
-    stem[1].set_color(".2")
-    stem[2].set_visible(False)
-    ax.axhline(0, color="C3", lw=3)
-    ax.set(ylabel="Weight", title=title)
-  ax.set(xlabel="Neuron (a.k.a. feature)")
-  f.tight_layout()
-
-# %% It is legacy function
-def LoadReactionTime(RTdir, inalldat=False, alldat=[], sessionstoload='all'):
-
-    # Sessions to load handling
-    if type(sessionstoload) is str:
-        if sessionstoload == 'all':
-            numsessions = np.arrange(len(alldat))
-        else:
-            raise TypeError('If sessionstoload is string, it could take only "all" value')
-    elif type(sessionstoload) is list or type(sessionstoload) is np.array:
-        numsessions = sessionstoload
-        print(f'We will load {len(sessionstoload)} sessions out of {len(len(fdir))}')
-    elif type(sessionstoload) is int:
-        numsessions = [sessionstoload]
-        print(f'We will load the session number {sessionstoload+1}')
-    else:
-        raise TypeError("sessionstoload is either 'all' or list or numpy array or int")
-
-    # Load the file
-    reaction_times = np.load(RTdir + '/reaction_times.npy', allow_pickle=True)
-    reaction_times = reaction_times[numsessions]
-
-    # If you need to incorporate this in alldat
-    if inalldat:
-
-        for idir in numsessions:
-            alldat[idir]['reaction_time'] = reaction_times[idir]
-
-        return alldat
-    else:
-        return reaction_times
