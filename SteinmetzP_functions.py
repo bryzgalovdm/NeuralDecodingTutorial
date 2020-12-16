@@ -15,6 +15,14 @@ import glob, os, sys
 os.chdir('/Users/bryzgalovdm/Documents/Steinmetz_dataset/')
 import SteinmetzHelpers
 
+# %% Provisory dict for areas
+areas = {
+    'motor_ctx': ['MOp', 'MOs'],
+    'visual_ctx': ['VISa', 'VISam', 'VISl', 'VISp', 'VISpm', 'VISrl'],
+    'hippocampus': ['CA1', 'CA3', 'DG', 'SUB', 'POST'],
+    'thalamus': ['LD', 'LGd', 'LP', 'MD', 'MG', 'PO', 'POL', 'RT', 'VPL', 'VPM']
+}
+
 # %% Dataset class
 class SteinmetzDataset:
     def __init__(self, path, eventtype, dt=0.05, dT=3.5, T0=1.5, brain='whole'):
@@ -35,9 +43,19 @@ class SteinmetzDataset:
         self.contrast_left = []
         self.onset = []
 
+    def countNeuronsinArea(self, area):
+        # Load data
+        good_cells, brain_region, _ = SteinmetzHelpers.get_good_cells(self.path)
+        # Count cells
+        good_region = brain_region[good_cells]
+        NN = len(good_region) # number of regions
+        barea = np.zeros(NN, )
+        barea[np.isin(good_region, area)] = 1
+        return np.sum(barea)
+
     def load(self):
         # good cells and brain regions
-        good_cells, brain_region = SteinmetzHelpers.get_good_cells(self.path)
+        good_cells, brain_region, _ = SteinmetzHelpers.get_good_cells(self.path)
         # event timing
         response_times, visual_times, rsp, _, feedback_time = SteinmetzHelpers.get_event_times(self.path)
         # event types
@@ -137,7 +155,7 @@ def LoadSteinmetzData(datadir, eventtype='stim',
         raise TypeError("sessionstoload is either 'all' or list or numpy array or int")
 
     for idir in range(len(numsessions)):
-        alldat[idir] = SteinmetzDataset(fdir[idir], eventtype)
+        alldat.append(SteinmetzDataset(fdir[idir], eventtype))
         alldat[idir].load()
 
     return alldat
