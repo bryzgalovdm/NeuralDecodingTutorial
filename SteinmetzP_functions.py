@@ -48,10 +48,10 @@ class SteinmetzDataset:
         good_cells, brain_region, _ = SteinmetzHelpers.get_good_cells(self.path)
         # Count cells
         good_region = brain_region[good_cells]
-        NN = len(good_region) # number of regions
+        NN = len(good_region) # number of good cells
         barea = np.zeros(NN, )
         barea[np.isin(good_region, area)] = 1
-        return np.sum(barea)
+        return np.sum(barea), good_region
 
     def load(self):
         # good cells and brain regions
@@ -74,7 +74,7 @@ class SteinmetzDataset:
             S = SteinmetzHelpers.psth(stimes, sclust, tolocktimes_react, self.dT, self.dt)
 
         # % Do the data
-        good_cells = good_cells * (np.mean(S, axis=(1,2))>0)
+        good_cells = good_cells * (np.mean(S, axis=(1,2))>0) # Get only neurons that fire
         S = S[good_cells].astype('int8')
 
         self.response = response
@@ -91,8 +91,9 @@ class SteinmetzDataset:
             self.onset = response_times
         elif self.eventtype == 'react':
             self.onset = tolocktimes_react
-
-        print(self.path + ' loaded successfully')
+        
+        pathparts = splitall(self.path)
+        print(pathparts[-2] + ' loaded successfully')
 
 
 # %% Load data
@@ -154,8 +155,26 @@ def LoadSteinmetzData(datadir, eventtype='stim',
     else:
         raise TypeError("sessionstoload is either 'all' or list or numpy array or int")
 
-    for idir in range(len(numsessions)):
-        alldat.append(SteinmetzDataset(fdir[idir], eventtype))
-        alldat[idir].load()
+    cnt = 0;
+    for idir in numsessions:
+        alldat.append(SteinmetzDataset(fdir[idir], eventtype, dt=binsize, dT=dT, T0=T0))
+        alldat[cnt].load()
+        cnt+=1
 
     return alldat
+
+# %% Split components of path into parts
+def splitall(path):
+    allparts = []
+    while 1:
+        parts = os.path.split(path)
+        if parts[0] == path:  # sentinel for absolute paths
+            allparts.insert(0, parts[0])
+            break
+        elif parts[1] == path: # sentinel for relative paths
+            allparts.insert(0, parts[1])
+            break
+        else:
+            path = parts[0]
+            allparts.insert(0, parts[1])
+    return allparts
